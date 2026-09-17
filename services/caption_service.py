@@ -6,15 +6,21 @@ os.makedirs(os.environ["KERAS_HOME"], exist_ok=True)
 import pickle
 import numpy as np
 from PIL import Image
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
-from tensorflow.keras.preprocessing.image import img_to_array
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import (
-    Input, Dense, Dropout, Embedding, LSTM, Bidirectional,
-    RepeatVector, Dot, Activation, Lambda, Concatenate
-)
+
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import Model
+    from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
+    from tensorflow.keras.preprocessing.image import img_to_array
+    from tensorflow.keras.preprocessing.sequence import pad_sequences
+    from tensorflow.keras.layers import (
+        Input, Dense, Dropout, Embedding, LSTM, Bidirectional,
+        RepeatVector, Dot, Activation, Lambda, Concatenate
+    )
+    TF_AVAILABLE = True
+except (ImportError, Exception):
+    tf = None
+    TF_AVAILABLE = False
 
 try:
     import streamlit as st
