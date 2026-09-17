@@ -463,7 +463,7 @@ with col_left:
             pil_image = ImageOps.exif_transpose(Image.open(uploaded_image)).convert("RGB")
             if st.session_state.image_rotation != 0:
                 pil_image = pil_image.rotate(-st.session_state.image_rotation, expand=True)
-            st.image(pil_image, caption="", use_column_width=True)
+            st.image(pil_image, caption="", use_container_width=True)
         except Exception as e:
             st.error(f"Error reading image: {e}")
             pil_image = None
