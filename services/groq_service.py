@@ -58,6 +58,70 @@ class GroqService:
             return False, f"🔴 Connection Error: {str(e)}"
 
     @classmethod
+    def _repair_and_parse_json(cls, text: str) -> Optional[Dict[str, Any]]:
+        """Robustly parses and auto-repairs truncated or imperfect JSON output."""
+        clean_text = text.strip()
+        if clean_text.startswith("```json"):
+            clean_text = clean_text[7:]
+        if clean_text.startswith("```"):
+            clean_text = clean_text[3:]
+        if clean_text.endswith("```"):
+            clean_text = clean_text[:-3]
+        clean_text = clean_text.strip()
+
+        start_idx = clean_text.find("{")
+        if start_idx == -1:
+            return None
+        clean_text = clean_text[start_idx:]
+
+        # 1. Direct JSON parse
+        try:
+            return json.loads(clean_text)
+        except Exception:
+            pass
+
+        # 2. Regex search for complete JSON object
+        json_match = re.search(r"\{.*\}", clean_text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except Exception:
+                pass
+
+        # 3. Progressive truncation & auto-closing of open braces / quotes
+        s = clean_text
+        for cut_point in range(len(s), max(0, len(s) - 500), -1):
+            sub = s[:cut_point].rstrip(' \t\n\r,')
+            quotes = len(re.findall(r'(?<!\\)"', sub))
+            if quotes % 2 != 0:
+                sub += '"'
+
+            open_curly = sub.count("{") - sub.count("}")
+            open_square = sub.count("[") - sub.count("]")
+
+            if open_curly < 0 or open_square < 0:
+                continue
+
+            candidate = sub + ("]" * open_square) + ("}" * open_curly)
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict) and len(parsed) > 0:
+                    return parsed
+            except Exception:
+                continue
+
+        # 4. Regex key-value extraction fallback
+        extracted = {}
+        for key in ["image_type", "overall_description", "subjects", "objects", "environment", "text_content", "chart_data", "visual_style", "confidence"]:
+            m = re.search(rf'"{key}"\s*:\s*([^,\n\}}]+)', clean_text)
+            if m:
+                extracted[key] = m.group(1).strip().strip('"')
+        if extracted:
+            return extracted
+
+        return None
+
+    @classmethod
     def analyze_with_vision(
         cls,
         image: Image.Image,
@@ -74,7 +138,7 @@ class GroqService:
         data_url = f"data:image/jpeg;base64,{img_b64}"
 
         system_prompt = """You are an expert multimodal visual intelligence analyst and generative AI prompt engineer.
-Analyze the provided image with forensic precision. Your output must strictly reflect WHAT IS VISUALLY PRESENT in the image without inventing or hallucinating details.
+Analyze the provided image with forensic precision. Your output must strictly reflect WHAT IS VISUALLY PRESENT in the image without inventing details.
 
 STRICT DOMAIN RULES:
 1. If the image is a CHART / GRAPH / INFOGRAPHIC / DIAGRAM:
@@ -83,36 +147,31 @@ STRICT DOMAIN RULES:
    - DO NOT hallucinate camera lenses (e.g. 50mm, f/1.4), shallow depth of field, outdoor nature, or human portrait elements.
 2. If the image is a PERSON / PORTRAIT:
    - "image_type" MUST be "Person / portrait".
-   - Identify precise subject details: gender, approximate age, expression, pose, facial hair, eye direction.
-   - Describe exact clothing items, colors, patterns, and accessories (e.g. sunglasses, hats, jewelry).
-   - Describe the exact background (e.g. waterfall, studio backdrop, cityscape, forest).
+   - Identify precise subject details: gender, approximate age, expression, pose, clothing items, colors, patterns.
 3. If the image is a UI SCREENSHOT / DIGITAL INTERFACE:
    - "image_type" MUST be "Screenshot / UI / digital interface".
-   - Transcribe all visible navigation menus, buttons, titles, cards, and theme colors into "text_content" and "ui_elements".
+   - Transcribe all visible navigation menus, buttons, titles, cards into "text_content" and "ui_elements".
 4. If the image is a DOCUMENT / TEXT-HEAVY IMAGE:
    - "image_type" MUST be "Document / text-heavy image".
    - Transcribe headings, paragraph structure, and layout into "text_content" and "document_elements".
 
-Return a single valid JSON object with:
-- "image_type": "Chart / graph / visualization | Person / portrait | Photograph / natural scene | Screenshot / UI / digital interface | Document / text-heavy image | Product / object | Architecture / interior | Artwork / illustration | Other"
-- "overall_description": "Comprehensive, forensic 2-paragraph visual scene breakdown."
-- "subjects": ["List of main subjects with descriptive details"]
-- "objects": ["List of detected specific objects, elements, props, visual components"]
-- "environment": "Forensic description of background, setting, canvas"
-- "actions": ["List of actions, interactions, poses"]
-- "spatial_relationships": ["List describing spatial positioning of subjects and objects"]
-- "people": [{"gender": "", "age_group": "", "expression": "", "pose": ""}]
-- "clothing": ["Exact clothing pieces, apparel colors, accessories"]
+Keep entries concise and dense. Return a single valid JSON object with:
+- "image_type": "Chart / graph / visualization | Person / portrait | Photograph / natural scene | Screenshot / UI / digital interface | Document / text-heavy image | Other"
+- "overall_description": "Accurate 1-2 paragraph visual scene breakdown."
+- "subjects": ["List of main subjects"]
+- "objects": ["List of detected specific objects, elements, bars, components"]
+- "environment": "Forensic description of background, coordinate canvas"
+- "actions": ["List of actions / dynamic poses"]
+- "spatial_relationships": ["Spatial positioning of elements"]
+- "clothing": ["Apparel / accessories"]
 - "colors": {"dominant": [], "secondary": [], "background": [], "temperature": "warm | cool | neutral"}
-- "lighting": "Lighting type, direction, intensity"
-- "camera": {"viewpoint": "eye-level | low-angle | high-angle | top-down", "angle": "straight-on | 45-degree | profile", "shot_type": "close-up | medium shot | full shot | vector flat", "depth_of_field": "deep focus | shallow focus | flat 2D"}
-- "composition": ["Framing, rule-of-thirds, symmetry, margins"]
-- "text_content": ["List of all exact text strings, titles, labels, numbers, OCR found in image"]
-- "chart_data": {"chart_type": "", "title": "", "x_axis": "", "y_axis": "", "legend": [], "series": []}
+- "lighting": "Lighting description"
+- "camera": {"viewpoint": "eye-level | low-angle | top-down", "shot_type": "close-up | medium | full | vector flat", "depth_of_field": "deep focus | shallow focus | flat 2D"}
+- "text_content": ["List of all visible OCR text, labels, numbers found in image"]
+- "chart_data": {"chart_type": "", "title": "", "x_axis": "", "y_axis": "", "series": []}
 - "ui_elements": ["List of UI elements, buttons, cards if UI"]
-- "document_elements": ["List of document headers, columns if document"]
-- "visual_style": "Photorealistic | Flat 2D Vector | Digital UI | 3D Render | Oil Painting | Watercolor"
-- "confidence": 0.95
+- "visual_style": "Photorealistic | Flat 2D Vector | Digital UI | 3D Render",
+- "confidence": 0.98
 """
 
         vision_models = [model, "qwen/qwen3.8-27b"]
@@ -129,13 +188,13 @@ Return a single valid JSON object with:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": system_prompt + "\nReturn ONLY the JSON object without code blocks or extra text."},
+                            {"type": "text", "text": system_prompt + "\nReturn ONLY the JSON object."},
                             {"type": "image_url", "image_url": {"url": data_url}},
                         ]
                     }
                 ],
                 "temperature": 0.1,
-                "max_tokens": 700,
+                "max_tokens": 800,
             }
 
             headers = dict(cls.DEFAULT_HEADERS)
@@ -153,21 +212,11 @@ Return a single valid JSON object with:
                         if resp.status == 200:
                             resp_json = json.loads(resp.read().decode("utf-8"))
                             content = resp_json["choices"][0]["message"]["content"]
-                            clean_text = content.strip()
-                            if clean_text.startswith("```json"):
-                                clean_text = clean_text[7:]
-                            if clean_text.startswith("```"):
-                                clean_text = clean_text[3:]
-                            if clean_text.endswith("```"):
-                                clean_text = clean_text[:-3]
-                            clean_text = clean_text.strip()
-
-                            json_match = re.search(r"\{.*\}", clean_text, re.DOTALL)
-                            if json_match:
-                                clean_text = json_match.group(0)
-
-                            parsed = json.loads(clean_text)
-                            return parsed, ""
+                            parsed = cls._repair_and_parse_json(content)
+                            if parsed:
+                                return parsed, ""
+                            else:
+                                last_error = "Failed to parse structured JSON from Vision model response."
                 except urllib.error.HTTPError as e:
                     err_msg = e.read().decode("utf-8") if hasattr(e, "read") else str(e)
                     try:
