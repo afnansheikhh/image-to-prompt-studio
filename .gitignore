@@ -1,0 +1,26 @@
+# Python & Environment
+.venv/
+env/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Sensitive API Keys & Config
+.api_keys.json
+.env
+*.key
+
+# Framework caches & data
+.keras/
+.pytest_cache/
+.streamlit/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Scratch and logs
+scratch/
+*.log
